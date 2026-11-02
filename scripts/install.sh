@@ -4,7 +4,7 @@ set -euo pipefail
 repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 python_bin="$HOME/.local/share/opencode-stt/venv/bin/python"
 [[ -x "$python_bin" ]] || { echo 'Create the environment described in README.md first.' >&2; exit 1; }
-"$python_bin" -c 'import sounddevice, numpy, scipy, pynput'
+"$python_bin" -c 'import sounddevice, numpy, scipy'
 mkdir -p "$HOME/.config/systemd/user" "$HOME/.config/local-stt" "$HOME/.local/state/opencode-stt" "$HOME/bin"
 if [[ -e "$HOME/stt.py" && ! -L "$HOME/stt.py" ]]; then
     cp -p "$HOME/stt.py" "$HOME/.local/state/opencode-stt/stt.py.backup-$(date +%Y%m%dT%H%M%S)"
@@ -16,6 +16,7 @@ cat > "$HOME/.config/systemd/user/local-stt.service" <<'EOF'
 [Unit]
 Description=Shared local and Groq push-to-talk dictation
 After=graphical-session.target local-stt-engine.service
+PartOf=graphical-session.target
 Wants=local-stt-engine.service
 
 [Service]
@@ -30,7 +31,7 @@ TimeoutStopSec=5
 KillMode=control-group
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 EOF
 cat > "$HOME/.config/systemd/user/local-stt-engine.service" <<'EOF'
 [Unit]

@@ -74,14 +74,14 @@ def clipboard_commands(wayland):
     return [way,x11] if wayland else [x11,way]
 
 
-def deliver(text):
+def deliver(text, announce=True):
     """Use the clipboard immediately; never inject a delayed result into another app."""
     wayland=bool(os.getenv('WAYLAND_DISPLAY')) or os.getenv('XDG_SESSION_TYPE')=='wayland'
     for cmd in clipboard_commands(wayland):
         if shutil.which(cmd[0]):
             try:
                 subprocess.run(cmd,input=text.encode(),check=True,timeout=1,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-                notify('Transcript copied — Ctrl+V to paste')
+                if announce:notify('Transcript copied — Ctrl+V to paste')
                 return 'clipboard'
             except (OSError,subprocess.SubprocessError): pass
     raise RuntimeError('Could not copy transcript. Check wl-copy/xclip and the desktop session.')
@@ -164,6 +164,7 @@ class Dictation:
         self.sd=sd; self.engine=engine or Engine()
         self.stream=None; self.recording=False; self.chunks=[]; self.rate=16000
         self.frames=0; self.mode=None; self.device_name=''; self.overflow=False
+        self.desktop=None; self.origin_focus=None
         self.started=0; self.max_seconds=int(os.getenv('STT_MAX_SECONDS','120'))
         self.jobs=queue.Queue(maxsize=1); self.shutdown=threading.Event()
         self.worker=threading.Thread(target=self.work,name='stt-transcription',daemon=True)
@@ -200,6 +201,7 @@ class Dictation:
             start=time.monotonic()
             index,self.rate,self.device_name=self.device()
             self.chunks=[]; self.frames=0; self.overflow=False; self.mode=mode
+            self.origin_focus=self.desktop.snapshot() if self.desktop else None
             self.stream=self.sd.InputStream(samplerate=self.rate,channels=1,device=index,dtype='float32',callback=self.audio)
             self.recording=True; self.started=time.monotonic(); self.stream.start()
             self.open_seconds=time.monotonic()-start
@@ -219,7 +221,7 @@ class Dictation:
         try:
             if stream:stream.stop(); stream.close()
             if not self.chunks:return
-            job=(np.concatenate(self.chunks,axis=0),self.rate,self.mode,released,{'capture_open_seconds':round(self.open_seconds,4),'input_device':self.device_name,'input_overflow':self.overflow,'hit_recording_limit':self.frames>=self.rate*self.max_seconds})
+            job=(np.concatenate(self.chunks,axis=0),self.rate,self.mode,released,{'capture_open_seconds':round(self.open_seconds,4),'input_device':self.device_name,'input_overflow':self.overflow,'hit_recording_limit':self.frames>=self.rate*self.max_seconds,'paste_target':self.origin_focus})
             self.jobs.put_nowait(job)
             notify('Transcribing…')
         except queue.Full:notify('Transcription queue is full',urgency='critical')
@@ -231,6 +233,7 @@ class Dictation:
             try:job=self.jobs.get(timeout=.2)
             except queue.Empty:continue
             audio,rate,mode,released,stats=job
+            target=stats.pop('paste_target',None)
             stats.update(mode=mode,timestamp=time.strftime('%Y-%m-%dT%H:%M:%S%z'),queue_seconds=round(time.monotonic()-released,4))
             path=None
             try:
@@ -240,10 +243,20 @@ class Dictation:
                 start=time.monotonic(); text,source=self.engine.transcribe(path,mode)
                 stats['transcription_seconds']=round(time.monotonic()-start,4)
                 if not text or text=='.':raise ValueError('Empty transcript')
-                start=time.monotonic(); stats['delivery']=deliver(text)
+                start=time.monotonic()
+                if self.desktop and os.getenv('STT_AUTO_PASTE','1')=='1':
+                    # Dictation never synthesizes Enter. Flatten cloud line breaks before auto-paste.
+                    text=' '.join(text.splitlines())
+                    stats['delivery']=deliver(text,announce=False)
+                    result=self.desktop.paste(target)
+                    stats['paste_status']=result
+                    if result=='pasted':
+                        stats['delivery']='pasted';notify('Transcript pasted into your text field')
+                    else:notify('Transcript copied — focus changed or auto-paste unavailable; Ctrl+V to paste',urgency='normal')
+                else:stats['delivery']=deliver(text)
                 stats.update(delivery_seconds=round(time.monotonic()-start,4),source=source,characters=len(text),status='ok')
                 if os.getenv('STT_LOG_TRANSCRIPTS')=='1': print(text,flush=True)
-                if stats['input_overflow']:notify('Audio capture overflowed; close CPU-heavy apps if words are missing',urgency='normal')
+                if stats.get('input_overflow',False):notify('Audio capture overflowed; close CPU-heavy apps if words are missing',urgency='normal')
             except Exception as e:
                 stats.update(status='error',error_type=type(e).__name__)
                 notify(str(e),title='STT error',urgency='critical')
@@ -284,19 +297,33 @@ def main():
     if args.devices:print(sd.query_devices()); return
     lease=acquire_singleton()
     if lease is None: print('STT is already running; reusing the existing listener.',flush=True);return
-    # Only the live listener needs a desktop connection.
-    from pynput import keyboard
     app=Dictation(sd)
-    modes={keyboard.Key.home:'local',keyboard.Key.insert:'groq'}
-    def pressed(key):
-        if key in modes:app.press(modes[key])
-    def released(key):
-        if key in modes:app.release(modes[key])
-    print('STT ready: hold HOME=local, INSERT=Groq; release, then Ctrl+V. One listener; background transcription.',flush=True)
-    notify('Ready: HOME=local · INSERT=Groq · Ctrl+V to paste')
+    bridge=None
     try:
-        with keyboard.Listener(on_press=pressed,on_release=released) as listener:listener.join()
-    finally:app.close();lease.close()
+        if os.getenv('STT_DESKTOP_BACKEND','auto')!='legacy':
+            try:
+                from desktop_client import DesktopBridge
+                bridge=DesktopBridge(app);app.desktop=bridge
+            except Exception as e:
+                print('Desktop integration unavailable: '+str(e),flush=True)
+                notify('Global integration unavailable; using legacy shortcuts + clipboard',urgency='normal')
+        if bridge:
+            print('STT ready system-wide: hold HOME=local, INSERT=Groq; release to paste. No agent wrapper needed.',flush=True)
+            notify('System-wide ready: hold HOME=local · INSERT=Groq · release to paste')
+            if bridge.wait()!=0:raise RuntimeError('Desktop bridge exited unexpectedly')
+        else:
+            from pynput import keyboard
+            modes={keyboard.Key.home:'local',keyboard.Key.insert:'groq'}
+            def pressed(key):
+                if key in modes:app.press(modes[key])
+            def released(key):
+                if key in modes:app.release(modes[key])
+            print('STT ready (legacy): hold HOME=local, INSERT=Groq; release, then Ctrl+V.',flush=True)
+            with keyboard.Listener(on_press=pressed,on_release=released) as listener:listener.join()
+    finally:
+        app.close()
+        if bridge:bridge.close()
+        lease.close()
 
 
 if __name__=='__main__':main()

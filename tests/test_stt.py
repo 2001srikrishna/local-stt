@@ -102,6 +102,22 @@ class Tests(unittest.TestCase):
                 self.assertNotIn('transcript',stats)
             finally:allow.set();app.close();app.worker.join(2)
 
+    def test_auto_paste_flattens_cloud_newlines_and_keeps_target_private(self):
+        from unittest.mock import Mock
+        engine=Mock();engine.transcribe.return_value=('Hello.\nNext line.','Groq')
+        desktop=Mock();desktop.paste.return_value='pasted'
+        with tempfile.TemporaryDirectory() as temp,patch.object(stt,'STATE',Path(temp)),patch.object(stt,'notify'),patch.object(stt,'deliver',return_value='clipboard') as copy:
+            app=stt.Dictation(None,engine);app.desktop=desktop
+            try:
+                target={'id':'window','app':'kitty'}
+                app.jobs.put((np.ones((16000,1))*.1,16000,'groq',time.monotonic(),{'paste_target':target}))
+                app.jobs.join()
+                copy.assert_called_once_with('Hello. Next line.',announce=False)
+                desktop.paste.assert_called_once_with(target)
+                record=json.loads((Path(temp)/'timings.jsonl').read_text())
+                self.assertEqual(record['delivery'],'pasted');self.assertEqual(record['status'],'ok');self.assertNotIn('paste_target',record)
+            finally:app.close();app.worker.join(1)
+
     def test_input_switch_re_resolved(self):
         class SD:
             default=type('Default',(),{'device':[0,0]})()
