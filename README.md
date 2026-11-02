@@ -184,3 +184,51 @@ systemctl --user disable local-stt-tray   # no tray startup next login
 ```
 
 Model/provider research is saved in [MODEL_RESEARCH.md](MODEL_RESEARCH.md). Research-only cloud providers are not exposed as working GUI choices. No overall model winner has been established for the user's speech.
+
+## Default local backend and continuous listening
+
+The tray's **Default local engine** menu selects CPU or GPU for the local shortcut. The same selector is in Settings. CPU remains the initial default; Groq's dedicated shortcut is unchanged, and Ctrl+Alt+End still explicitly requests GPU. Changing the tray default takes effect for subsequent local phrases without restarting continuous capture. GPU execution continues to use the bounded, on-demand container and CPU fallback.
+
+**Listen continuously (local)** is a separate tray toggle. It opens the microphone until toggled off, disabled, restarted or logged out. The tray icon is **red while listening**, amber while starting and green for ordinary push-to-talk. It always starts off after a service restart/login. It does not call Groq or create continuous cloud charges. Push-to-talk is ignored while continuous capture is active.
+
+This is phrase-based continuous dictation, not word-by-word streaming captions. A local energy detector ends a phrase after~0.7sec silence or at15sec maximum. It keeps a short pre-roll, rejects silence-only segments and transcribes bounded chunks in capture order through the selected default local engine. The voice threshold is configurable in Settings (default−42dBFS; lower values hear quieter sounds but also more background). Background audio can be treated as speech. Recognition/VAD accuracy still needs testing with the user's microphones.
+
+Each phrase keeps the window identity from speech onset. The original-window auto-paste guard remains active. Switching windows during a phrase leaves its result on the clipboard; the next phrase may target the new window. No Enter is synthesized. A full transcription queue or capture overflow stops continuous capture and notifies rather than growing memory indefinitely. Stop closes the microphone immediately and finishes the final captured phrase; already-running transcription may deliver shortly after stop. Very short fragments below the minimum speech duration can be discarded.
+
+The GUI controls the listener through a private mode0600 Unix socket in a mode0700 runtime directory. Its API has only status/listen-start/listen-stop/default-cpu/default-gpu, no paste or arbitrary command endpoint. No continuous-listen setting is persisted as “on.”
+
+Config defaults:
+
+```
+STT_LOCAL_BACKEND=cpu
+STT_LISTEN_THRESHOLD_DB=-42
+STT_LISTEN_PAUSE=0.7
+```
+
+## First-time installation
+
+From a clone on a logged-in Fedora KDE desktop:
+
+```bash
+git clone https://github.com/2001srikrishna/local-stt.git
+cd local-stt
+bash scripts/setup.sh --install-system
+```
+
+This installs named Fedora dependencies with sudo, creates/reuses the STT venv, builds pinned official Whisper CPU executables only if missing, downloads only missing official base.en weights with upstream LFS SHA256 verification, installs services/tray/launcher, and enables desktop startup. Existing binaries, models, config and credentials are preserved. It does not create cloud accounts or configure spending.
+
+For optional Radeon mode, configure Docker separately with appropriate user/device access, then:
+
+```bash
+bash scripts/setup.sh --gpu
+```
+
+That explicitly downloads the pinned official GPU container and missing Turbo weights, reusing anything already present. `--install-system` includes an active-session uaccess rule only if virtual keyboard access is missing; it does not chmod the device world-writable or grant broad input-device read access. Without automatic paste permission, clipboard fallback remains available.
+
+Read-only check for an existing installation:
+
+```bash
+bash scripts/setup.sh --check
+```
+
+The setup script was syntax-checked and its read-only check passed on the development machine. A clean-machine installation/build was not executed during this update; OS/package/driver compatibility outside the tested Fedora KDE installation remains unverified.

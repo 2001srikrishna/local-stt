@@ -154,7 +154,6 @@ class Engine:
             return self.client.audio.transcriptions.create(**options).strip()
 
     def gpu(self,path):
-        if os.getenv('STT_GPU_ENABLED','1')!='1':raise RuntimeError('GPU mode is disabled')
         from gpu_runtime import run
         self.gpu_metrics={}
         text,metrics,_=run(path)
@@ -162,6 +161,7 @@ class Engine:
         return parse_local_text(text)
 
     def transcribe(self,path,mode):
+        if mode=='local' and os.getenv('STT_LOCAL_BACKEND','cpu')=='gpu':mode='gpu'
         if mode=='gpu':
             try:return self.gpu(path),'Local GPU Turbo'
             except Exception as e:
@@ -183,6 +183,7 @@ class Dictation:
         self.stream=None; self.recording=False; self.chunks=[]; self.rate=16000
         self.frames=0; self.mode=None; self.device_name=''; self.overflow=False
         self.desktop=None; self.origin_focus=None
+        self.capture_lock=threading.RLock();self.continuous=None
         self.started=0; self.max_seconds=int(os.getenv('STT_MAX_SECONDS','120'))
         self.jobs=queue.Queue(maxsize=1); self.shutdown=threading.Event()
         self.worker=threading.Thread(target=self.work,name='stt-transcription',daemon=True)
@@ -212,6 +213,11 @@ class Dictation:
             block=indata[:remaining].copy(); self.chunks.append(block); self.frames+=len(block)
 
     def press(self,mode):
+        with self.capture_lock:return self._press(mode)
+
+    def _press(self,mode):
+        if self.continuous and self.continuous.running:
+            notify('Continuous listening is on; toggle it off before push-to-talk',urgency='normal');return
         if self.recording:return
         if self.jobs.full():
             notify('One recording is already waiting; retry when transcription finishes',urgency='normal'); return
@@ -233,6 +239,9 @@ class Dictation:
             notify(str(e),title='STT recording error',urgency='critical')
 
     def release(self,mode):
+        with self.capture_lock:return self._release(mode)
+
+    def _release(self,mode):
         if not self.recording or self.mode!=mode:return
         released=time.monotonic(); self.recording=False
         stream,self.stream=self.stream,None
@@ -260,7 +269,7 @@ class Dictation:
                 write(path,16000,pcm)
                 start=time.monotonic(); text,source=self.engine.transcribe(path,mode)
                 stats['transcription_seconds']=round(time.monotonic()-start,4)
-                if mode=='gpu' and source=='Local GPU Turbo':stats.update(self.engine.gpu_metrics)
+                if source=='Local GPU Turbo':stats.update(self.engine.gpu_metrics)
                 if not text or text=='.':raise ValueError('Empty transcript')
                 start=time.monotonic()
                 if self.desktop and os.getenv('STT_AUTO_PASTE','1')=='1':
@@ -288,7 +297,41 @@ class Dictation:
                 print(json.dumps(stats),flush=True)
                 self.jobs.task_done()
 
+    def listen_status(self):
+        return {'listening':bool(self.continuous and self.continuous.running),'recording':self.recording,'local_backend':os.getenv('STT_LOCAL_BACKEND','cpu')}
+
+    def control(self,command):
+        if command=='listen-start':self.start_continuous()
+        elif command=='listen-stop':self.stop_continuous()
+        elif command in ('default-cpu','default-gpu'):os.environ['STT_LOCAL_BACKEND']=command.split('-')[1]
+        elif command!='status':raise ValueError('Unknown control command')
+        return self.listen_status()
+
+    def start_continuous(self):
+        from continuous import ContinuousCapture
+        with self.capture_lock:
+            if self.continuous and self.continuous.running:return
+            if self.recording:raise RuntimeError('Finish push-to-talk recording first')
+            if self.continuous:self.continuous.stop(flush=False)
+            device,rate,name=self.device()
+            def focus():return self.desktop.snapshot() if self.desktop else None
+            def emit(audio,rate,target):
+                try:self.jobs.put((audio,rate,'local',time.monotonic(),{'continuous':True,'input_device':name,'input_overflow':False,'paste_target':target}),timeout=1)
+                except queue.Full:raise RuntimeError('Transcription cannot keep up; listening stopped')
+            def error(message):notify(message,title='Continuous listening stopped',urgency='critical')
+            threshold=10**(float(os.getenv('STT_LISTEN_THRESHOLD_DB','-42'))/20)
+            self.continuous=ContinuousCapture(self.sd,device,rate,emit,focus,error,threshold=threshold,pause=float(os.getenv('STT_LISTEN_PAUSE','0.7')))
+            self.continuous.start()
+            notify('Microphone ON continuously — local transcription until toggled off',urgency='normal')
+
+    def stop_continuous(self,flush=True):
+        with self.capture_lock:
+            if self.continuous:
+                self.continuous.stop(flush=flush);self.continuous=None
+                notify('Continuous microphone OFF'+(' — finishing the last phrase' if flush else ''),urgency='normal')
+
     def close(self):
+        self.stop_continuous(flush=False)
         self.recording=False; self.shutdown.set()
         if self.stream:
             with contextlib.suppress(Exception):self.stream.stop(); self.stream.close()
@@ -320,6 +363,8 @@ def main():
     lease=acquire_singleton()
     if lease is None: print('STT is already running; reusing the existing listener.',flush=True);return
     app=Dictation(sd)
+    from control import Server
+    controls=Server(app.control)
     bridge=None
     try:
         if os.getenv('STT_DESKTOP_BACKEND','auto')!='legacy':
@@ -349,7 +394,7 @@ def main():
             print('STT ready (legacy): hold Ctrl+Alt+Home=local, Ctrl+Alt+Insert=Groq; release, then Ctrl+V.',flush=True)
             with keyboard.Listener(on_press=pressed,on_release=released) as listener:listener.join()
     finally:
-        app.close()
+        controls.close();app.close()
         if bridge:bridge.close()
         lease.close()
 

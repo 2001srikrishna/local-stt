@@ -80,6 +80,21 @@ class Tests(unittest.TestCase):
         with patch.object(engine,'gpu',side_effect=RuntimeError('busy')),patch.object(engine,'local',return_value='cpu words'),patch.object(engine,'cloud') as cloud,patch.object(stt,'notify'):
             self.assertEqual(engine.transcribe('audio.wav','gpu'),('cpu words','Local CPU fallback'));cloud.assert_not_called()
 
+    def test_default_local_can_select_gpu_without_cloud(self):
+        engine=stt.Engine()
+        with patch.dict(stt.os.environ,{'STT_LOCAL_BACKEND':'gpu'}),patch.object(engine,'gpu',return_value='quality'),patch.object(engine,'local') as cpu,patch.object(engine,'cloud') as cloud:
+            self.assertEqual(engine.transcribe('audio.wav','local'),('quality','Local GPU Turbo'));cpu.assert_not_called();cloud.assert_not_called()
+
+    def test_continuous_is_off_until_explicit_start_and_default_can_change(self):
+        app=stt.Dictation(None)
+        try:
+            self.assertFalse(app.control('status')['listening'])
+            with patch.dict(stt.os.environ,{'STT_LOCAL_BACKEND':'cpu'}):
+                self.assertEqual(app.control('default-gpu')['local_backend'],'gpu')
+                self.assertEqual(app.control('default-cpu')['local_backend'],'cpu')
+            with self.assertRaises(ValueError):app.control('paste')
+        finally:app.close();app.worker.join(1)
+
     def test_home_never_calls_cloud(self):
         engine=stt.Engine()
         with patch.object(engine,'cloud') as cloud,patch.object(engine,'local',return_value='offline'):

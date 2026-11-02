@@ -55,3 +55,11 @@ On-demand GPU results and resource limits are in [GPU.md](GPU.md). Container con
 The Qt tray app uses preinstalled PySide6. Its settings window was rendered offscreen and inspected ([preview](docs/settings.png)). The live process registered a StatusNotifierItem with KDE, owns org.localstt.Tray, and is enabled for graphical-session login. The ready notification command returned0. Resource metrics after steady startup should be read from the services; initial startup RSS is not an idle benchmark.
 
 31unique regression checks are covered:29core checks in the STT venv and2Qt settings tests run with system Python/PySide6. The venv test discovery reports31tests with2Qt skips; the separate Qt run passes those2. Added tests cover bounded/pinned/no-network GPU command construction, resource gates, CPU fallback, settings preservation/permissions/quoting, duplicate shortcut rejection, and preserving disabled state on Apply. No live keystroke was injected into an uncontrolled text field for testing. User app-level paste verification remains separate.
+
+## Default backend, continuous mode and setup script
+
+Added8regression checks: silence rejection/bounded pre-roll, one emission per phrase, final flush/original target, bounded long speech, stream closure on stop, private control socket cleanup/permissions, default-local GPU routing without cloud, and explicit continuous activation/default changes. Venv suite39tests with2Qt skips; the2systemQtsettings tests pass separately (39unique checks covered).
+
+A production integration test fed the publicJFK recording through synthetic capture callbacks and real continuous segmentation/CPUWhisper, with clipboard delivery mocked. It emitted exactly one phrase, transcribed11.8sec (including trailing silence) in~0.53sec and returned listening=false after stop. No real microphone or uncontrolled key injection was used for this check. Continuous listening with the actual microphones and phrase-boundary quality remains user verification.
+
+Updated settings window rendered and inspected. Installed control endpoint reports listening=false, recording=false and CPU local default. setup.sh--check passed; no fresh-machine dependency installation/build was performed. The setup script preserves existing artifacts and verifies downloaded model files against upstream LFS SHA256 metadata.

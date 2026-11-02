@@ -8,9 +8,10 @@ import subprocess
 import sys
 from PySide6.QtCore import Qt,QTimer,QObject,Slot
 from PySide6.QtDBus import QDBusConnection,QDBusInterface
-from PySide6.QtGui import QAction,QColor,QDesktopServices,QIcon,QKeySequence,QPainter,QPixmap
+from PySide6.QtGui import QAction,QActionGroup,QColor,QDesktopServices,QIcon,QKeySequence,QPainter,QPixmap
 from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QDialog,QDialogButtonBox,QFormLayout,QGroupBox,QHBoxLayout,QKeySequenceEdit,QLabel,QMenu,QMessageBox,QPushButton,QSpinBox,QSystemTrayIcon,QVBoxLayout
 import settings_store
+import control
 
 ROOT=Path(__file__).resolve().parent
 HOME=Path.home()
@@ -28,12 +29,13 @@ def active():return command('systemctl','--user','is-active','local-stt.service'
 def enabled():return command('systemctl','--user','is-enabled','local-stt.service').returncode==0
 
 
-def icon(on):
+def icon(on,listening=False,starting=False):
     image=QPixmap(32,32);image.fill(Qt.GlobalColor.transparent)
     painter=QPainter(image);painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor('#23b899' if on else '#7b8290'));painter.setPen(Qt.PenStyle.NoPen)
+    color='#e34c55' if listening else '#e5a538' if starting else '#23b899' if on else '#7b8290'
+    painter.setBrush(QColor(color));painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(12,4,8,16,4,4)
-    painter.setPen(QColor('#23b899' if on else '#7b8290'))
+    painter.setPen(QColor(color))
     painter.drawArc(8,9,16,16,180*16,180*16);painter.drawLine(16,25,16,29);painter.drawLine(11,29,21,29)
     painter.end();return QIcon(image)
 
@@ -47,9 +49,10 @@ class Settings(QDialog):
         behavior=QGroupBox('Behavior');form=QFormLayout(behavior);layout.addWidget(behavior)
         self.auto=QCheckBox('Automatically paste into the original window');self.auto.setChecked(v.get('STT_AUTO_PASTE','1')=='1');form.addRow(self.auto)
         self.login=QCheckBox('Enable dictation at desktop login');self.login.setChecked(enabled());form.addRow(self.login)
+        self.local_backend=QComboBox();self.local_backend.addItem('CPU — fast and lightweight','cpu');self.local_backend.addItem('GPU — larger local model','gpu');self.local_backend.setCurrentIndex(1 if v.get('STT_LOCAL_BACKEND','cpu')=='gpu' else 0);form.addRow('Default local engine',self.local_backend)
         self.gpu=QCheckBox('Enable optional on-demand GPU shortcut');self.gpu.setChecked(v.get('STT_GPU_ENABLED','1')=='1');form.addRow(self.gpu)
         self.keys={}
-        for mode,label in [('LOCAL','CPU local'),('GROQ','Groq cloud'),('GPU','GPU local')]:
+        for mode,label in [('LOCAL','Default local'),('GROQ','Groq cloud'),('GPU','Explicit GPU local')]:
             key=QKeySequenceEdit(QKeySequence(int(v.get('STT_KEY_'+mode,str(DEFAULT_KEYS[mode])),0)))
             key.setMaximumSequenceLength(1);self.keys[mode]=key;form.addRow(label+' shortcut',key)
         models=QGroupBox('Microphone and models');form=QFormLayout(models);layout.addWidget(models)
@@ -75,7 +78,8 @@ class Settings(QDialog):
         self.threads=QSpinBox();self.threads.setRange(1,os.cpu_count() or 16);self.threads.setValue(int(v.get('STT_THREADS','8')));form.addRow('CPU threads',self.threads)
         self.language=QComboBox();self.language.setEditable(True);self.language.addItems(['en','auto','hi','ta','de','fr','es']);self.language.setCurrentText(v.get('STT_LANGUAGE','en'));form.addRow('Language',self.language)
         self.limit=QSpinBox();self.limit.setRange(5,300);self.limit.setSuffix(' seconds');self.limit.setValue(int(v.get('STT_MAX_SECONDS','120')));form.addRow('Recording limit',self.limit)
-        helptext=QLabel('CPU base.en supports English only. Other languages need GPU Turbo or Groq.\nGPU is loaded only during a recording’s transcription; it falls back to CPU if busy.\nRelease every key in the shortcut before auto-paste. No Enter is sent.')
+        self.threshold=QSpinBox();self.threshold.setRange(-65,-20);self.threshold.setSuffix(' dBFS');self.threshold.setValue(int(v.get('STT_LISTEN_THRESHOLD_DB','-42')));form.addRow('Continuous speech threshold',self.threshold)
+        helptext=QLabel('The default local engine is used by the local shortcut and continuous listening.\nContinuous mode transcribes phrases at pauses; it stays off until toggled on.\nCPU base.en is English-only. GPU loads on demand and falls back to CPU if busy.')
         helptext.setWordWrap(True);layout.addWidget(helptext)
         self.note=QLabel('Settings do not contain or display your cloud API key.');self.note.setWordWrap(True);layout.addWidget(self.note)
         buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Apply|QDialogButtonBox.StandardButton.Close)
@@ -94,7 +98,7 @@ class Settings(QDialog):
                 if any(str(x[2])!='org.localstt.Dictation' for x in manager.getGlobalShortcutsByKey(keycodes[m])):raise ValueError(m+' shortcut is used by another KDE application')
             language=self.language.currentText().strip()
             if not language or not language.replace('-','').isalpha():raise ValueError('Use a language code such as en, hi or auto')
-            updates={'STT_AUTO_PASTE':int(self.auto.isChecked()),'STT_GPU_ENABLED':int(self.gpu.isChecked()),'STT_INPUT_DEVICE':self.device.currentData(),'STT_WHISPER_MODEL':self.cpu_model.currentData(),'STT_GPU_MODEL':self.gpu_model.currentData(),'STT_THREADS':self.threads.value(),'STT_LANGUAGE':language,'STT_MAX_SECONDS':self.limit.value()}
+            updates={'STT_LOCAL_BACKEND':self.local_backend.currentData(),'STT_LISTEN_THRESHOLD_DB':self.threshold.value(),'STT_AUTO_PASTE':int(self.auto.isChecked()),'STT_GPU_ENABLED':int(self.gpu.isChecked()),'STT_INPUT_DEVICE':self.device.currentData(),'STT_WHISPER_MODEL':self.cpu_model.currentData(),'STT_GPU_MODEL':self.gpu_model.currentData(),'STT_THREADS':self.threads.value(),'STT_LANGUAGE':language,'STT_MAX_SECONDS':self.limit.value()}
             updates.update({'STT_KEY_'+m:str(code) for m,code in keycodes.items()})
             was_active=active();settings_store.write(updates)
             result=command('systemctl','--user','enable' if self.login.isChecked() else 'disable','local-stt.service')
@@ -109,8 +113,12 @@ class Settings(QDialog):
 
 class Tray:
     def __init__(self,app):
-        self.app=app;self.window=None;self.tray=QSystemTrayIcon(icon(active()),app)
+        self.app=app;self.window=None;self.listen_generation=0;self.listen_pending=False;self.tray=QSystemTrayIcon(icon(active()),app)
         self.menu=QMenu();self.toggle=QAction('Dictation enabled',self.menu);self.toggle.setCheckable(True);self.toggle.triggered.connect(self.set_enabled);self.menu.addAction(self.toggle)
+        self.listen=QAction('Listen continuously (local)',self.menu);self.listen.setCheckable(True);self.listen.triggered.connect(self.set_listening);self.menu.addAction(self.listen)
+        defaults=self.menu.addMenu('Default local engine');self.default_group=QActionGroup(self.menu);self.default_actions={}
+        for mode,label in [('cpu','CPU — fast/light'),('gpu','GPU — larger model')]:
+            action=defaults.addAction(label);action.setCheckable(True);self.default_group.addAction(action);action.triggered.connect(lambda checked,m=mode:self.set_default(m));self.default_actions[mode]=action
         settings=self.menu.addAction('Settings…');settings.triggered.connect(self.settings)
         self.menu.addSeparator();self.info=self.menu.addAction('Hold shortcut → speak → release');self.info.setEnabled(False)
         logs=self.menu.addAction('Recent latency');logs.triggered.connect(self.latency)
@@ -121,13 +129,42 @@ class Tray:
 
     def refresh(self):
         state=active();self.toggle.blockSignals(True);self.toggle.setChecked(state);self.toggle.blockSignals(False)
-        self.tray.setIcon(icon(state));self.tray.setToolTip('Local STT — '+('enabled' if state else 'disabled'))
+        try:data=control.request('status') if state else {}
+        except (OSError,ValueError,RuntimeError):data={}
+        listening=data.get('listening',False)
+        self.listen.blockSignals(True);self.listen.setChecked(listening or self.listen_pending);self.listen.blockSignals(False)
+        backend=settings_store.read().get('STT_LOCAL_BACKEND','cpu')
+        for mode,action in self.default_actions.items():action.setChecked(mode==backend)
+        self.tray.setIcon(icon(state,listening,self.listen_pending))
+        self.tray.setToolTip('Local STT — '+('MIC ON · continuously listening' if listening else 'starting listening…' if self.listen_pending else 'enabled · push-to-talk' if state else 'disabled'))
 
     def set_enabled(self,state):
+        if not state:self.listen_generation+=1;self.listen_pending=False
         try:
             result=command('systemctl','--user','start' if state else 'stop','local-stt.service')
             if result.returncode:raise RuntimeError(result.stderr.strip())
         except Exception as e:self.tray.showMessage('Local STT',str(e),QSystemTrayIcon.MessageIcon.Warning)
+        self.refresh()
+
+    def set_default(self,mode):
+        try:
+            settings_store.write({'STT_LOCAL_BACKEND':mode})
+            if active():control.request('default-'+mode)
+        except Exception as e:self.tray.showMessage('Local STT',str(e),QSystemTrayIcon.MessageIcon.Warning)
+        self.refresh()
+
+    def set_listening(self,state):
+        self.listen_generation+=1;generation=self.listen_generation
+        self.listen_pending=state
+        if state and not active():self.set_enabled(True)
+        def attempt(number=0):
+            if generation!=self.listen_generation:return
+            try:
+                control.request('listen-start' if state else 'listen-stop');self.listen_pending=False;self.refresh()
+            except (OSError,ValueError,RuntimeError) as e:
+                if state and number<12:QTimer.singleShot(300,lambda:attempt(number+1));return
+                self.listen_pending=False;self.refresh();self.tray.showMessage('Local STT',str(e),QSystemTrayIcon.MessageIcon.Warning)
+        attempt()
         self.refresh()
 
     def settings(self):
