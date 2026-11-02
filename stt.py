@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Push-to-talk dictation: Home=offline Whisper, Insert=Groq (optional).
+"""Push-to-talk dictation: Ctrl+Alt+Home=offline Whisper, Ctrl+Alt+Insert=Groq (optional).
 
 One listener, bounded background transcription, native Wayland clipboard.
 Imports have no desktop/listener side effects, so the core can be tested offline.
@@ -308,17 +308,23 @@ def main():
                 print('Desktop integration unavailable: '+str(e),flush=True)
                 notify('Global integration unavailable; using legacy shortcuts + clipboard',urgency='normal')
         if bridge:
-            print('STT ready system-wide: hold HOME=local, INSERT=Groq; release to paste. No agent wrapper needed.',flush=True)
-            notify('System-wide ready: hold HOME=local · INSERT=Groq · release to paste')
+            print('STT ready system-wide: hold Ctrl+Alt+Home=local, Ctrl+Alt+Insert=Groq; release to paste. No agent wrapper needed.',flush=True)
+            notify('System-wide ready: hold Ctrl+Alt+Home=local · Ctrl+Alt+Insert=Groq · release to paste')
             if bridge.wait()!=0:raise RuntimeError('Desktop bridge exited unexpectedly')
         else:
             from pynput import keyboard
             modes={keyboard.Key.home:'local',keyboard.Key.insert:'groq'}
+            held=set()
+            ctrl={keyboard.Key.ctrl_l,keyboard.Key.ctrl_r}
+            alt={keyboard.Key.alt_l,keyboard.Key.alt_r}
             def pressed(key):
-                if key in modes:app.press(modes[key])
+                held.add(key)
+                if key in modes and held.intersection(ctrl) and held.intersection(alt):app.press(modes[key])
             def released(key):
+                held.discard(key)
                 if key in modes:app.release(modes[key])
-            print('STT ready (legacy): hold HOME=local, INSERT=Groq; release, then Ctrl+V.',flush=True)
+                elif key in ctrl|alt and app.recording:app.release(app.mode)
+            print('STT ready (legacy): hold Ctrl+Alt+Home=local, Ctrl+Alt+Insert=Groq; release, then Ctrl+V.',flush=True)
             with keyboard.Listener(on_press=pressed,on_release=released) as listener:listener.join()
     finally:
         app.close()

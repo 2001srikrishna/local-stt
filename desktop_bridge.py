@@ -21,7 +21,8 @@ from desktop_keys import is_terminal, paste_keys
 NAME='org.localstt.Dictation'
 OBJECT='/org/localstt/Dictation'
 SCRIPT_NAME='local-stt-focus'
-KEYS={'local':0x01000010,'groq':0x01000006}
+# Qt Ctrl|Alt plus Home/Insert. Plain editing keys remain untouched.
+KEYS={'local':0x0D000010,'groq':0x0D000006}
 
 
 def output(event,**details):
@@ -60,7 +61,7 @@ def main():
             if any(str(binding[2])!=NAME for binding in bindings):raise RuntimeError(f'{action} shortcut is already assigned to another KDE application')
             identity=dbus.Array([NAME,action,'Local STT','Offline dictation' if action=='local' else 'Groq dictation'],signature='s')
             manager.doRegister(identity);actions.append(identity)
-            actual=manager.setShortcut(identity,dbus.Array([key],signature='i'),dbus.UInt32(2))
+            actual=manager.setShortcut(identity,dbus.Array([key],signature='i'),dbus.UInt32(6))
             if not actual:raise RuntimeError('KDE did not register shortcut '+action)
         component=str(manager.getComponent(NAME))
         def pressed(component,action,timestamp):
@@ -87,7 +88,7 @@ def main():
             return True
         GLib.io_add_watch(sys.stdin,GLib.IO_IN|GLib.IO_HUP|GLib.IO_ERR,command)
         for sig in (signal.SIGTERM,signal.SIGINT):GLibUnix.signal_add(GLib.PRIORITY_DEFAULT,sig,lambda:(loop.quit(),False)[1])
-        output('ready',keys=['Home','Insert'])
+        output('ready',keys=['Ctrl+Alt+Home','Ctrl+Alt+Insert'])
         loop.run()
     finally:
         for identity in actions:

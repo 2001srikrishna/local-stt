@@ -2,9 +2,9 @@
 
 Small Linux push-to-talk dictation utility using **whisper.cpp locally** and optional **Groq Whisper**.
 
-Hold **Home** for offline transcription, or **Insert** for Groq. **Release to paste automatically into the focused text field**, across KDE Wayland applications and terminals, without agent wrappers. If the original window changes, the result stays on the clipboard for manual paste. One shared listener, background transcription, native clipboard, and private timing diagnostics.
+Hold **Ctrl+Alt+Home** for offline transcription, or **Ctrl+Alt+Insert** for Groq. **Release to paste automatically into the focused text field**, across KDE Wayland applications and terminals, without agent wrappers. If the original window changes, the result stays on the clipboard for manual paste. One shared listener, background transcription, native clipboard, and private timing diagnostics.
 
-This is a desktop utility, not a replacement speech model. It reuses installed models and audio tools. Local mode does not send audio to a server. Insert explicitly selects Groq and uploads that recording; Groq usage can incur provider charges. Cloud failure falls back to local Whisper without a hidden retry loop.
+This is a desktop utility, not a replacement speech model. It reuses installed models and audio tools. Local mode does not send audio to a server. Ctrl+Alt+Insert explicitly selects Groq and uploads that recording; Groq usage can incur provider charges. Cloud failure falls back to local Whisper without a hidden retry loop.
 
 ## What changed
 
@@ -143,14 +143,17 @@ The shared listener now keeps the installed local model loaded through `whisper-
 After pulling this update, rerun `bash scripts/install.sh` then `~/bin/stt restart` to install the companion engine unit. `~/bin/stt stop` also stops the resident engine to free its RAM. Model, beam size and transcription quality settings stay the same. This trims startup overhead; it does not make the recognition compute cost disappear, especially on longer recordings.
 
 
-## System-wide Home / Insert and automatic paste
+## System-wide Ctrl+Alt+Home / Ctrl+Alt+Insert and automatic paste
 
-The default is **hold to talk, release to paste**. Home and Insert become global dictation keys while the service is active, including in native Wayland applications. Stop with `~/bin/stt stop` to return their normal editing functions. Restart with `~/bin/stt start`. No `codex-stt`, `opencode-stt` or other agent wrapper is required.
+The default is **hold to talk, release to paste**. Plain **Home and Insert keep their normal editing functions** while dictation runs. Only Ctrl+Alt+Home and Ctrl+Alt+Insert are reserved. Release all keys in the chord before the result is pasted. Restart with `~/bin/stt start`. No `codex-stt`, `opencode-stt` or other agent wrapper is required.
 
 The backend registers actions under **Local STT** in KDE’s shortcut service. It leaves another application’s conflicting shortcut alone and reuses its own saved bindings across restarts. A small KWin script reports only window identity and application class, not titles or text content. The helper exposes no D-Bus paste command: paste requests travel over a private pipe from the dictation parent.
 
-After transcription, text is copied and the bridge checks the original window identity immediately before sending Ctrl+V. Recognized terminal applications use Ctrl+Shift+V instead. It never sends Enter, and cloud line breaks are flattened before automatic paste. There is no change to microphone selection, local/cloud routing, or which cloud provider receives Insert recordings.
+After transcription, text is copied and the bridge checks the original window identity immediately before sending Ctrl+V. Recognized terminal applications use Ctrl+Shift+V instead. It never sends Enter, and cloud line breaks are flattened before automatic paste. There is no change to microphone selection, local/cloud routing, or which cloud provider receives Ctrl+Alt+Insert recordings.
 
-Limitations: this identifies **windows**, not individual browser tabs/widgets. Keep the intended field focused until the result appears. Integrated terminals, unusual paste bindings, password/secure fields, and applications that block paste may need manual Ctrl+V or app-specific shortcuts. A successful synthetic key request cannot prove that an application accepted the paste. The live Home/Insert-to-application check remains a user-side validation step. No keyboard event was injected into an uncontrolled focused application during setup.
+Limitations: this identifies **windows**, not individual browser tabs/widgets. Keep the intended field focused until the result appears. Integrated terminals, unusual paste bindings, password/secure fields, and applications that block paste may need manual Ctrl+V or app-specific shortcuts. A successful synthetic key request cannot prove that an application accepted the paste. The live Ctrl+Alt+Home/Ctrl+Alt+Insert-to-application check remains a user-side validation step. No keyboard event was injected into an uncontrolled focused application during setup.
 
 Set `STT_AUTO_PASTE=0` for global hotkeys with clipboard-only delivery. Set `STT_DESKTOP_BACKEND=legacy` to use the previous X/XWayland listener. Disabling autostart: `systemctl --user disable local-stt.service`.
+
+
+Shortcut update: modified chords are now forced into this application’s own saved KDE bindings during startup, replacing its earlier unmodified Home/Insert assignments. Another application’s conflicting binding is still left alone. The archived pre-improvement script retains its original plain Home/Insert behavior.
