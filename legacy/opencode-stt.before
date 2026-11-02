@@ -1,0 +1,47 @@
+#!/bin/bash
+# ~/bin/opencode-stt - launch OpenCode with local speech-to-text
+
+USER_HOME="/home/srikri"
+STT_PYTHON="$USER_HOME/.local/share/opencode-stt/venv/bin/python"
+STT_SCRIPT="$USER_HOME/stt.py"
+OPENCODE_BINARY="$USER_HOME/.opencode/bin/opencode"
+STT_LOG_DIR="$USER_HOME/.local/state/opencode-stt"
+CREDENTIALS_FILE="$USER_HOME/.config/aider/credentials.env"
+
+# Make provider credentials available to the STT child process without storing
+# them in this launcher or relying on an interactive shell.
+if [[ -f "$CREDENTIALS_FILE" ]]; then
+    set -a
+    source "$CREDENTIALS_FILE"
+    set +a
+fi
+
+if [[ ! -x "$STT_PYTHON" ]]; then
+    echo "opencode-stt: missing Python environment at $STT_PYTHON" >&2
+    exit 1
+fi
+
+if [[ ! -f "$STT_SCRIPT" ]]; then
+    echo "opencode-stt: missing STT script at $STT_SCRIPT" >&2
+    exit 1
+fi
+
+if [[ ! -x "$OPENCODE_BINARY" ]]; then
+    echo "opencode-stt: missing OpenCode at $OPENCODE_BINARY" >&2
+    exit 1
+fi
+
+# GROQ_API_KEY remains optional.  Local transcription works without it.
+mkdir -p "$STT_LOG_DIR"
+"$STT_PYTHON" "$STT_SCRIPT" >>"$STT_LOG_DIR/stt.log" 2>&1 &
+STT_PID=$!
+
+# Cleanup on exit
+cleanup() {
+    kill $STT_PID 2>/dev/null
+    wait $STT_PID 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+# Launch OpenCode without relying on an interactive-shell PATH.
+"$OPENCODE_BINARY" "$@"

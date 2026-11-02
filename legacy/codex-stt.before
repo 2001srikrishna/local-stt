@@ -1,0 +1,35 @@
+#!/bin/bash
+# Launch Codex CLI with the shared speech-to-text listener.
+
+USER_HOME="/home/srikri"
+STT_PYTHON="$USER_HOME/.local/share/opencode-stt/venv/bin/python"
+STT_SCRIPT="$USER_HOME/stt.py"
+CODEX_BINARY="$USER_HOME/.local/bin/codex"
+STT_LOG_DIR="$USER_HOME/.local/state/opencode-stt"
+
+if [[ ! -x "$STT_PYTHON" ]]; then
+    echo "codex-stt: missing Python environment at $STT_PYTHON" >&2
+    exit 1
+fi
+
+if [[ ! -f "$STT_SCRIPT" ]]; then
+    echo "codex-stt: missing STT script at $STT_SCRIPT" >&2
+    exit 1
+fi
+
+if [[ ! -x "$CODEX_BINARY" ]]; then
+    echo "codex-stt: missing Codex CLI at $CODEX_BINARY" >&2
+    exit 1
+fi
+
+mkdir -p "$STT_LOG_DIR"
+"$STT_PYTHON" "$STT_SCRIPT" >>"$STT_LOG_DIR/stt.log" 2>&1 &
+STT_PID=$!
+
+cleanup() {
+    kill "$STT_PID" 2>/dev/null
+    wait "$STT_PID" 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+"$CODEX_BINARY" "$@"
