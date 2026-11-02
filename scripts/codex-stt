@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+systemctl --user start local-stt.service
+exec "$HOME/.local/bin/codex" "$@"

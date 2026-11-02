@@ -1,0 +1,6 @@
+# Existing deployment uses Python 3.14; core also supports Python 3.10+.
+numpy
+scipy
+sounddevice
+pynput
+groq

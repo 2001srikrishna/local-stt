@@ -1,0 +1,6 @@
+# Direct package versions from the tested Python3.14 environment.
+numpy==2.5.4
+scipy==1.18.1
+sounddevice==0.5.6
+pynput==1.7.7
+groq==1.7.0
