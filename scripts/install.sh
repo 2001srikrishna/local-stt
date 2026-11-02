@@ -15,11 +15,13 @@ fi
 cat > "$HOME/.config/systemd/user/local-stt.service" <<'EOF'
 [Unit]
 Description=Shared local and Groq push-to-talk dictation
-After=graphical-session.target
+After=graphical-session.target local-stt-engine.service
+Wants=local-stt-engine.service
 
 [Service]
 ExecStart=%h/.local/share/opencode-stt/venv/bin/python -u %h/stt.py
 Environment=PYTHONUNBUFFERED=1
+Environment=STT_RESIDENT=1
 Restart=on-failure
 RestartSec=3
 MemoryMax=4G
@@ -29,6 +31,20 @@ KillMode=control-group
 
 [Install]
 WantedBy=default.target
+EOF
+cat > "$HOME/.config/systemd/user/local-stt-engine.service" <<'EOF'
+[Unit]
+Description=Resident CPU Whisper engine for dictation (loopback only)
+PartOf=local-stt.service
+
+[Service]
+ExecStart=%h/.local/share/opencode-stt/venv/bin/python -u %h/stt.py --serve
+Restart=on-failure
+RestartSec=2
+MemoryMax=4G
+MemorySwapMax=512M
+TimeoutStopSec=5
+KillMode=control-group
 EOF
 cat > "$HOME/bin/stt" <<'EOF'
 #!/usr/bin/env bash

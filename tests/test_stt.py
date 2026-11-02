@@ -50,6 +50,25 @@ class Tests(unittest.TestCase):
             self.assertEqual(engine.transcribe('x.wav','groq'),('offline transcript','Local'))
             local.assert_called_once()
 
+    def test_resident_response_preserves_segments(self):
+        from unittest.mock import Mock
+        engine=stt.Engine();engine.local_client=Mock()
+        engine.local_client.post.return_value.json.return_value={'text':'First.\nSecond.\n'}
+        with tempfile.NamedTemporaryFile(suffix='.wav') as f,patch.dict(stt.os.environ,{'STT_RESIDENT':'1'}),patch.object(stt.subprocess,'run') as standalone:
+            self.assertEqual(engine.local(f.name),'First. Second.')
+            standalone.assert_not_called()
+            self.assertTrue(engine.local_client.post.call_args.args[0].startswith('http://127.0.0.1:'))
+
+    def test_resident_failure_uses_standalone(self):
+        from unittest.mock import Mock
+        import httpx
+        engine=stt.Engine();engine.local_client=Mock()
+        engine.local_client.post.side_effect=httpx.ConnectError('offline')
+        result=type('Result',(),{'stdout':'Fallback.','stderr':'','returncode':0})()
+        with tempfile.NamedTemporaryFile(suffix='.wav') as f,patch.dict(stt.os.environ,{'STT_RESIDENT':'1'}),patch.object(stt.subprocess,'run',return_value=result) as standalone:
+            self.assertEqual(engine.local(f.name),'Fallback.')
+            standalone.assert_called_once()
+
     def test_home_never_calls_cloud(self):
         engine=stt.Engine()
         with patch.object(engine,'cloud') as cloud,patch.object(engine,'local',return_value='offline'):

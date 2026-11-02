@@ -114,12 +114,29 @@ class Engine:
         self.model=os.path.expanduser(os.getenv('STT_WHISPER_MODEL',str(HOME/'whisper.cpp/models/ggml-base.en.bin')))
         self.threads=int(os.getenv('STT_THREADS','8'))
         self.client=None
+        self.local_client=None
 
     def local(self,path):
+        if os.getenv('STT_RESIDENT')=='1':
+            import httpx
+            if self.local_client is None:
+                self.local_client=httpx.Client(timeout=httpx.Timeout(90,connect=.3),trust_env=False)
+            try:
+                with open(path,'rb') as f:
+                    response=self.local_client.post('http://127.0.0.1:'+os.getenv('STT_SERVER_PORT','18765')+'/inference',files={'file':(Path(path).name,f,'audio/wav')},data={'response_format':'json','language':os.getenv('STT_LANGUAGE','en'),'beam_size':'5','best_of':'5','temperature':'0'})
+                response.raise_for_status()
+                return parse_local_text(response.json()['text'])
+            except (httpx.HTTPError,ValueError,KeyError,OSError):
+                print('Resident local engine unavailable; using standalone Whisper.',flush=True)
         result=subprocess.run([self.binary,'-m',self.model,'-f',str(path),'-t',str(self.threads),'-bs','5','-bo','5','-ac','0','--no-timestamps','--no-gpu','-l',os.getenv('STT_LANGUAGE','en')],capture_output=True,text=True,timeout=90)
         if result.returncode:
             raise RuntimeError('Local Whisper failed: '+(result.stderr.strip().splitlines() or ['unknown error'])[-1])
         return parse_local_text(result.stdout)
+
+    def serve(self):
+        binary=os.getenv('STT_WHISPER_SERVER',str(Path(self.binary).with_name('whisper-server')))
+        args=[binary,'-m',self.model,'-t',str(self.threads),'-bs','5','-bo','5','-ng','-nt','--host','127.0.0.1','--port',os.getenv('STT_SERVER_PORT','18765')]
+        os.execv(binary,args)
 
     def cloud(self,path):
         key=cloud_key()
@@ -259,7 +276,9 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--devices',action='store_true',help='List microphone inputs without starting the listener')
     parser.add_argument('--transcribe',metavar='WAV',help='Offline file test; prints text without touching the clipboard')
+    parser.add_argument('--serve',action='store_true',help='Run the resident local inference engine on loopback')
     args=parser.parse_args()
+    if args.serve:Engine().serve(); return
     if args.transcribe:print(Engine().local(args.transcribe)); return
     import sounddevice as sd
     if args.devices:print(sd.query_devices()); return

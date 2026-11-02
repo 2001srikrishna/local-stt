@@ -129,3 +129,12 @@ To temporarily run the old behavior:
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
 - [Groq speech-to-text API](https://console.groq.com/docs/speech-to-text)
 - [pynput platform limitations](https://pynput.readthedocs.io/en/latest/limitations.html)
+
+
+## Resident engine (latency follow-up)
+
+The shared listener now keeps the installed local model loaded through `whisper-server`, bound only to `127.0.0.1:18765`. `local-stt-engine.service` starts with the listener and stops with it. This avoids repeated model loading and process startup while keeping beam5 decoding. It uses about 300 MB additional RAM on the tested base.en model. The engine has its own 4 GiB /512 MiB swap limit. A standalone CLI fallback remains available if its HTTP endpoint cannot be used.
+
+`STT_RESIDENT=1` enables this path in the service; direct `--transcribe` calls still default to standalone unless that variable is set. `STT_WHISPER_SERVER` can override the binary and `STT_SERVER_PORT` its loopback port (change in the config and restart both through `~/bin/stt restart`). The HTTP client ignores proxy environment variables, keeping local audio on loopback. No public interface or sharing tunnel is started. Other local users/processes able to reach loopback can access this endpoint; it has no HTTP authentication.
+
+After pulling this update, rerun `bash scripts/install.sh` then `~/bin/stt restart` to install the companion engine unit. `~/bin/stt stop` also stops the resident engine to free its RAM. Model, beam size and transcription quality settings stay the same. This trims startup overhead; it does not make the recognition compute cost disappear, especially on longer recordings.
