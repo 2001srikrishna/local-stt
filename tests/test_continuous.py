@@ -28,6 +28,12 @@ class Tests(unittest.TestCase):
         s.push(self.block(),{'id':'other'})
         audio,target=s.flush();self.assertEqual(len(audio),400);self.assertEqual(target['id'],'original')
 
+    def test_short_final_word_is_padded_for_engine_minimum(self):
+        s=m.Segmenter(1000)
+        for _ in range(3):s.push(self.block())
+        audio,_=s.flush();self.assertEqual(len(audio),400)
+        self.assertTrue(np.all(audio[-100:]==0))
+
     def test_long_speech_is_bounded(self):
         s=m.Segmenter(1000,maximum=1)
         out=[s.push(self.block()) for _ in range(25)]

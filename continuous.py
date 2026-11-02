@@ -31,7 +31,10 @@ class Segmenter:
 
     def flush(self):
         result=None
-        if self.blocks and self.voiced>=self.minimum:result=(np.concatenate(self.blocks),self.target)
+        if self.blocks and self.voiced>=self.minimum:
+            audio=np.concatenate(self.blocks)
+            if len(audio)<.4*self.rate:audio=np.pad(audio,((0,int(.4*self.rate)-len(audio)),(0,0)))
+            result=(audio,self.target)
         self.blocks=[];self.frames=0;self.voiced=0;self.silent=0;self.target=None
         self.before.clear();self.before_frames=0
         return result

@@ -60,7 +60,7 @@ def main():
         for action,key in KEYS.items():
             bindings=manager.getGlobalShortcutsByKey(key)
             if any(str(binding[2])!=NAME for binding in bindings):raise RuntimeError(f'{action} shortcut is already assigned to another KDE application')
-            identity=dbus.Array([NAME,action,'Local STT',{'local':'CPU offline dictation','groq':'Groq dictation','gpu':'GPU Turbo offline dictation'}[action]],signature='s')
+            identity=dbus.Array([NAME,action,'Local STT',{'local':'Default local dictation','groq':'Groq dictation','gpu':'GPU Turbo offline dictation'}[action]],signature='s')
             manager.doRegister(identity);actions.append(identity)
             actual=manager.setShortcut(identity,dbus.Array([key],signature='i'),dbus.UInt32(6))
             if not actual:raise RuntimeError('KDE did not register shortcut '+action)
