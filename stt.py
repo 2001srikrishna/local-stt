@@ -115,6 +115,7 @@ class Engine:
         self.threads=int(os.getenv('STT_THREADS','8'))
         self.client=None
         self.local_client=None
+        self.gpu_metrics={}
 
     def local(self,path):
         if os.getenv('STT_RESIDENT')=='1':
@@ -147,9 +148,26 @@ class Engine:
             # No invisible multi-retry stalls. Fall back to local on a failed cloud request.
             self.client=Groq(api_key=key,max_retries=0,timeout=httpx.Timeout(25,connect=5))
         with open(path,'rb') as f:
-            return self.client.audio.transcriptions.create(file=(Path(path).name,f.read()),model='whisper-large-v3-turbo',language=os.getenv('STT_LANGUAGE','en'),response_format='text',temperature=0).strip()
+            options={'file':(Path(path).name,f.read()),'model':'whisper-large-v3-turbo','response_format':'text','temperature':0}
+            language=os.getenv('STT_LANGUAGE','en')
+            if language!='auto':options['language']=language
+            return self.client.audio.transcriptions.create(**options).strip()
+
+    def gpu(self,path):
+        if os.getenv('STT_GPU_ENABLED','1')!='1':raise RuntimeError('GPU mode is disabled')
+        from gpu_runtime import run
+        self.gpu_metrics={}
+        text,metrics,_=run(path)
+        self.gpu_metrics=metrics
+        return parse_local_text(text)
 
     def transcribe(self,path,mode):
+        if mode=='gpu':
+            try:return self.gpu(path),'Local GPU Turbo'
+            except Exception as e:
+                print(f'GPU mode unavailable ({type(e).__name__}); using CPU Whisper.',flush=True)
+                notify('GPU mode unavailable/busy — using CPU Whisper',urgency='normal')
+                return self.local(path),'Local CPU fallback'
         if mode=='groq':
             try:return self.cloud(path),'Groq'
             except Exception as e:
@@ -205,7 +223,7 @@ class Dictation:
             self.stream=self.sd.InputStream(samplerate=self.rate,channels=1,device=index,dtype='float32',callback=self.audio)
             self.recording=True; self.started=time.monotonic(); self.stream.start()
             self.open_seconds=time.monotonic()-start
-            notify(f'Recording: {"local" if mode=="local" else "Groq"} — release key to transcribe')
+            notify('Recording: '+{'local':'CPU local','groq':'Groq','gpu':'GPU Turbo'}.get(mode,mode)+' — release key to transcribe')
             print(f'Recording {mode}: {self.device_name}, {self.rate}Hz; opened in {self.open_seconds:.3f}s',flush=True)
         except Exception as e:
             self.recording=False
@@ -242,6 +260,7 @@ class Dictation:
                 write(path,16000,pcm)
                 start=time.monotonic(); text,source=self.engine.transcribe(path,mode)
                 stats['transcription_seconds']=round(time.monotonic()-start,4)
+                if mode=='gpu' and source=='Local GPU Turbo':stats.update(self.engine.gpu_metrics)
                 if not text or text=='.':raise ValueError('Empty transcript')
                 start=time.monotonic()
                 if self.desktop and os.getenv('STT_AUTO_PASTE','1')=='1':
@@ -287,6 +306,7 @@ def acquire_singleton():
 def main():
     load_settings()
     parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--devices-json',action='store_true',help='List input devices as JSON for the tray settings')
     parser.add_argument('--devices',action='store_true',help='List microphone inputs without starting the listener')
     parser.add_argument('--transcribe',metavar='WAV',help='Offline file test; prints text without touching the clipboard')
     parser.add_argument('--serve',action='store_true',help='Run the resident local inference engine on loopback')
@@ -294,6 +314,8 @@ def main():
     if args.serve:Engine().serve(); return
     if args.transcribe:print(Engine().local(args.transcribe)); return
     import sounddevice as sd
+    if args.devices_json:
+        print(json.dumps([{'name':d['name'],'index':i,'rate':d['default_samplerate']} for i,d in enumerate(sd.query_devices()) if d['max_input_channels']>0])); return
     if args.devices:print(sd.query_devices()); return
     lease=acquire_singleton()
     if lease is None: print('STT is already running; reusing the existing listener.',flush=True);return
@@ -308,12 +330,12 @@ def main():
                 print('Desktop integration unavailable: '+str(e),flush=True)
                 notify('Global integration unavailable; using legacy shortcuts + clipboard',urgency='normal')
         if bridge:
-            print('STT ready system-wide: hold Ctrl+Alt+Home=local, Ctrl+Alt+Insert=Groq; release to paste. No agent wrapper needed.',flush=True)
-            notify('System-wide ready: hold Ctrl+Alt+Home=local · Ctrl+Alt+Insert=Groq · release to paste')
+            print('STT ready system-wide: release your dictation shortcut to paste. Configure shortcuts in the Local STT tray.',flush=True)
+            notify('System-wide dictation ready — shortcuts and modes are configured in the Local STT tray')
             if bridge.wait()!=0:raise RuntimeError('Desktop bridge exited unexpectedly')
         else:
             from pynput import keyboard
-            modes={keyboard.Key.home:'local',keyboard.Key.insert:'groq'}
+            modes={keyboard.Key.home:'local',keyboard.Key.insert:'groq',keyboard.Key.end:'gpu'}
             held=set()
             ctrl={keyboard.Key.ctrl_l,keyboard.Key.ctrl_r}
             alt={keyboard.Key.alt_l,keyboard.Key.alt_r}

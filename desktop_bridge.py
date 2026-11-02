@@ -2,7 +2,7 @@
 """KDE desktop bridge using preinstalled system dbus/GLib/evdev.
 
 stdin/stdout are private JSON pipes to the STT parent. This process registers
-only two global actions; it does not read raw keyboard events. The virtual
+only three global actions; it does not read raw keyboard events. The virtual
 keyboard exposes only Ctrl, Shift and V, and never sends Enter.
 """
 import contextlib
@@ -22,7 +22,8 @@ NAME='org.localstt.Dictation'
 OBJECT='/org/localstt/Dictation'
 SCRIPT_NAME='local-stt-focus'
 # Qt Ctrl|Alt plus Home/Insert. Plain editing keys remain untouched.
-KEYS={'local':0x0D000010,'groq':0x0D000006}
+KEYS={mode:int(os.getenv('STT_KEY_'+mode.upper(),str(default)),0) for mode,default in {'local':0x0D000010,'groq':0x0D000006,'gpu':0x0D000011}.items()}
+if os.getenv('STT_GPU_ENABLED','1')!='1':KEYS.pop('gpu',None)
 
 
 def output(event,**details):
@@ -59,7 +60,7 @@ def main():
         for action,key in KEYS.items():
             bindings=manager.getGlobalShortcutsByKey(key)
             if any(str(binding[2])!=NAME for binding in bindings):raise RuntimeError(f'{action} shortcut is already assigned to another KDE application')
-            identity=dbus.Array([NAME,action,'Local STT','Offline dictation' if action=='local' else 'Groq dictation'],signature='s')
+            identity=dbus.Array([NAME,action,'Local STT',{'local':'CPU offline dictation','groq':'Groq dictation','gpu':'GPU Turbo offline dictation'}[action]],signature='s')
             manager.doRegister(identity);actions.append(identity)
             actual=manager.setShortcut(identity,dbus.Array([key],signature='i'),dbus.UInt32(6))
             if not actual:raise RuntimeError('KDE did not register shortcut '+action)
@@ -88,7 +89,7 @@ def main():
             return True
         GLib.io_add_watch(sys.stdin,GLib.IO_IN|GLib.IO_HUP|GLib.IO_ERR,command)
         for sig in (signal.SIGTERM,signal.SIGINT):GLibUnix.signal_add(GLib.PRIORITY_DEFAULT,sig,lambda:(loop.quit(),False)[1])
-        output('ready',keys=['Ctrl+Alt+Home','Ctrl+Alt+Insert'])
+        output('ready',keys=['Ctrl+Alt+Home','Ctrl+Alt+Insert','Ctrl+Alt+End'])
         loop.run()
     finally:
         for identity in actions:

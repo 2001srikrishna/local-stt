@@ -157,3 +157,30 @@ Set `STT_AUTO_PASTE=0` for global hotkeys with clipboard-only delivery. Set `STT
 
 
 Shortcut update: modified chords are now forced into this application’s own saved KDE bindings during startup, replacing its earlier unmodified Home/Insert assignments. Another application’s conflicting binding is still left alone. The archived pre-improvement script retains its original plain Home/Insert behavior.
+
+## Tray app and settings
+
+Run `bash scripts/install-tray.sh` to install/start the small Qt tray app and enable it for desktop login. The tested Fedora machine already has system PySide6; the tray uses `/usr/bin/python3`, not a second Qt install in the STT venv. It does not record audio or run inference itself.
+
+Look for the microphone tray icon (including KDE's hidden-icons menu). Right-click:
+
+- **Dictation enabled**: start/stop the listener and resident CPU model.
+- **Settings**: choose microphone, installed CPU/GPU models, CPU threads, language, recording limit, auto-paste, startup and shortcuts.
+- **Recent latency**: view the last result's timing without displaying transcript text.
+- **Quit tray**: close the controller, keeping dictation in its current state as labeled.
+
+The application menu entry is **Local STT**. Double-clicking the tray icon opens settings. Reopening the application entry raises the existing settings window through a single-instance local D-Bus service. Settings apply restarts dictation only if it was running; applying settings while disabled keeps it disabled. Closing the settings window leaves the tray app running. Config writes preserve unrelated settings/credentials, are atomic and mode0600; keys are not shown in the GUI.
+
+Shortcuts can be customized in the GUI; they must be distinct and include a modifier. Another KDE application's binding is not overwritten. The default optional GPU shortcut is **Ctrl+Alt+End**. It runs Turbo locally on demand and leaves no model loaded on the GPU between dictations. See [GPU.md](GPU.md).
+
+Local model dropdowns list files already installed; no downloads/purchases are triggered by choosing settings. CPU base.en is English-only. Choose GPU/Groq for other languages; Groq's automatic language option omits the language hint instead of sending an invalid literal `auto`.
+
+Runtime controls:
+
+```bash
+systemctl --user start local-stt-tray
+systemctl --user stop local-stt-tray
+systemctl --user disable local-stt-tray   # no tray startup next login
+```
+
+Model/provider research is saved in [MODEL_RESEARCH.md](MODEL_RESEARCH.md). Research-only cloud providers are not exposed as working GUI choices. No overall model winner has been established for the user's speech.

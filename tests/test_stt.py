@@ -69,6 +69,17 @@ class Tests(unittest.TestCase):
             self.assertEqual(engine.local(f.name),'Fallback.')
             standalone.assert_called_once()
 
+    def test_optional_gpu_routes_separately(self):
+        engine=stt.Engine()
+        with patch.object(engine,'gpu',return_value='quality words') as gpu,patch.object(engine,'local') as local,patch.object(engine,'cloud') as cloud:
+            self.assertEqual(engine.transcribe('audio.wav','gpu'),('quality words','Local GPU Turbo'))
+            gpu.assert_called_once();local.assert_not_called();cloud.assert_not_called()
+
+    def test_gpu_busy_falls_back_to_cpu_never_cloud(self):
+        engine=stt.Engine()
+        with patch.object(engine,'gpu',side_effect=RuntimeError('busy')),patch.object(engine,'local',return_value='cpu words'),patch.object(engine,'cloud') as cloud,patch.object(stt,'notify'):
+            self.assertEqual(engine.transcribe('audio.wav','gpu'),('cpu words','Local CPU fallback'));cloud.assert_not_called()
+
     def test_home_never_calls_cloud(self):
         engine=stt.Engine()
         with patch.object(engine,'cloud') as cloud,patch.object(engine,'local',return_value='offline'):
